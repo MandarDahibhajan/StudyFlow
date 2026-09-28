@@ -162,19 +162,19 @@ class StudyFlowThemeController extends ValueNotifier<ThemeMode> {
 }
 
 class StudyFlowTheme {
-  static const Color backgroundLight = Color(0xFFF4F6F2);
-  static const Color backgroundWarm = Color(0xFFF8F5F1);
+  static const Color backgroundLight = Color(0xFFF6F4FF);
+  static const Color backgroundWarm = Color(0xFFF9F7FF);
   static const Color glassFill = Color(0xCCFFFFFF);
   static const Color glassBorder = Color(0x33FFFFFF);
-  static const Color sage = Color(0xFF5C8D72);
-  static const Color sageStrong = Color(0xFF3F7758);
-  static const Color sageSoft = Color(0xFFEAF5EE);
-  static const Color mint = Color(0xFFBFE6D1);
-  static const Color charcoal = Color(0xFF1B2A22);
-  static const Color muted = Color(0xFF607067);
-  static const Color cream = Color(0xFFF9F7F3);
-  static const Color amber = Color(0xFFE9B85D);
-  static const Color danger = Color(0xFFDA6A5D);
+  static const Color sage = Color(0xFF6D5DF6);
+  static const Color sageStrong = Color(0xFF4F46E5);
+  static const Color sageSoft = Color(0xFFEAE5FF);
+  static const Color mint = Color(0xFFD9D2FF);
+  static const Color charcoal = Color(0xFF1F2337);
+  static const Color muted = Color(0xFF5D668C);
+  static const Color cream = Color(0xFFFDFBFF);
+  static const Color amber = Color(0xFFF6C76E);
+  static const Color danger = Color(0xFFEA6B7C);
 
   static ThemeData get lightTheme {
     final base = ThemeData(
@@ -587,21 +587,39 @@ class StudyFlowNavBar extends StatelessWidget {
       child: GlassContainer(
         radius: 30,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        color: Colors.white.withValues(alpha: 0.34),
+        color: Colors.white.withValues(alpha: 0.32),
         child: NavigationBar(
-          height: 70,
+          height: 72,
           selectedIndex: selectedIndex,
           onDestinationSelected: onDestinationSelected,
           backgroundColor: Colors.transparent,
-          indicatorColor: const Color(0xFFE2F0E5),
-          indicatorShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          indicatorColor: const Color(0xFFE7E2FF),
+          indicatorShape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          shadowColor: Colors.transparent,
           elevation: 0,
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.home_outlined, size: 22), selectedIcon: Icon(Icons.home_rounded, size: 22), label: 'Home'),
-            NavigationDestination(icon: Icon(Icons.calendar_today_outlined, size: 22), selectedIcon: Icon(Icons.calendar_today_rounded, size: 22), label: 'Plan'),
-            NavigationDestination(icon: Icon(Icons.timer_outlined, size: 22), selectedIcon: Icon(Icons.timer_rounded, size: 22), label: 'Focus'),
-            NavigationDestination(icon: Icon(Icons.sticky_note_2_outlined, size: 22), selectedIcon: Icon(Icons.sticky_note_2_rounded, size: 22), label: 'Notes'),
-            NavigationDestination(icon: Icon(Icons.grid_view_outlined, size: 22), selectedIcon: Icon(Icons.grid_view_rounded, size: 22), label: 'More'),
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined, size: 22),
+              selectedIcon: Icon(Icons.home_rounded, size: 22),
+              label: 'Home',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.menu_book_outlined, size: 22),
+              selectedIcon: Icon(Icons.menu_book_rounded, size: 22),
+              label: 'Chapters',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.checklist_outlined, size: 22),
+              selectedIcon: Icon(Icons.checklist_rounded, size: 22),
+              label: 'Tasks',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline, size: 22),
+              selectedIcon: Icon(Icons.person_rounded, size: 22),
+              label: 'Profile',
+            ),
           ],
         ),
       ),
@@ -1457,10 +1475,10 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         password: password,
       );
 
-      final session = response.session;
-      if (session != null && session.user != null) {
+      final user = response.session?.user;
+      if (user != null) {
         await Supabase.instance.client.from('profiles').upsert({
-          'id': session.user!.id,
+          'id': user.id,
           'username': username,
           'display_name': username,
         }, onConflict: 'id');
@@ -1746,8 +1764,7 @@ class _MainNavigationState extends State<MainNavigation> {
     DashboardScreen(),
     PlannerScreen(),
     FocusScreen(),
-    NotesScreen(),
-    MoreScreen(),
+    ProfileScreen(),
   ];
 
   @override
@@ -1835,282 +1852,706 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AnimatedBuilder(
       animation: StudyPlanStore.instance,
       builder: (context, _) {
-      final chapters = StudyPlanStore.instance.chapters;
-      final completedChapters =
-        chapters.where((chapter) => chapter.isCompleted).length;
-      final progress =
-        chapters.isEmpty ? 0.0 : completedChapters / chapters.length;
-      final rawName = StudyFlowData.instance.profileDisplayName.trim();
-      final firstName =
-        rawName.isNotEmpty ? rawName.split(' ').first : 'there';
-      final focusChapter = chapters
-          .where((chapter) => !chapter.isCompleted)
-          .firstOrNull ??
-        (chapters.isEmpty ? null : chapters.first);
+        final chapters = StudyPlanStore.instance.chapters;
+        final storeError = StudyPlanStore.instance.error;
+        final isLoading = StudyPlanStore.instance.isLoading;
+        final completedChapters =
+            chapters.where((chapter) => chapter.isCompleted).length;
+        final progress =
+            chapters.isEmpty ? 0.0 : completedChapters / chapters.length;
+        final rawName = StudyFlowData.instance.profileDisplayName.trim();
+        final firstName =
+            rawName.isNotEmpty ? rawName.split(' ').first : 'there';
+        final focusChapter = chapters
+                .where((chapter) => !chapter.isCompleted)
+                .firstOrNull ??
+            (chapters.isEmpty ? null : chapters.first);
+        final todayTasks = chapters
+            .expand((chapter) => chapter.tasks)
+            .where((task) => !task.isCompleted)
+            .take(3)
+            .toList();
+        final chapterShortcuts = chapters.take(3).toList();
 
-      return SafeArea(
-      child: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
-        slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 8),
-            sliver: SliverToBoxAdapter(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${_greeting()} 👋', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 14, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 4),
-                        Text('Hi, $firstName', style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: -0.8, color: StudyFlowTheme.charcoal)),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final contentWidth = constraints.maxWidth > 560 ? 560.0 : constraints.maxWidth;
+
+            return SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: contentWidth),
+                  child: CustomScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    slivers: [
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                        sliver: SliverToBoxAdapter(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${_greeting()} 👋',
+                                      style: TextStyle(
+                                        color: StudyFlowTheme.muted,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Hi, $firstName',
+                                      style: const TextStyle(
+                                        fontSize: 29,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: -0.8,
+                                        color: StudyFlowTheme.charcoal,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: _openProfile,
+                                child: Container(
+                                  width: 54,
+                                  height: 54,
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [
+                                        Color(0xFFE6E0FF),
+                                        Color(0xFFCFC7FF),
+                                      ],
+                                    ),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white.withValues(alpha: 0.85),
+                                      width: 3,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.08),
+                                        blurRadius: 18,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.person_rounded,
+                                    color: StudyFlowTheme.sageStrong,
+                                    size: 25,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                        sliver: SliverToBoxAdapter(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 260),
+                            curve: Curves.easeOutCubic,
+                            child: GestureDetector(
+                              onTap: _pickDate,
+                              child: GlassContainer(
+                                radius: 20,
+                                padding: const EdgeInsets.all(8),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Container(
+                                        height: 46,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFEDE8FF),
+                                          borderRadius: BorderRadius.circular(15),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Text(
+                                          _dateLabel(),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            color: StudyFlowTheme.sageStrong,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Center(
+                                        child: Text(
+                                          'Today',
+                                          style: TextStyle(
+                                            color: StudyFlowTheme.muted,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      size: 21,
+                                      color: StudyFlowTheme.muted,
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+                        sliver: SliverToBoxAdapter(
+                          child: GlassCard(
+                            radius: 30,
+                            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+                            child: Row(
+                              children: [
+                                ProgressRing(
+                                  value: progress,
+                                  size: 110,
+                                  strokeWidth: 10,
+                                  color: StudyFlowTheme.sageStrong,
+                                ),
+                                const SizedBox(width: 18),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      ProgressPill(
+                                        text: chapters.isEmpty ? 'START HERE' : 'STUDY PLAN',
+                                        color: Colors.white,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        chapters.isEmpty
+                                            ? "Let's create your study plan."
+                                            : 'Your study progress',
+                                        style: const TextStyle(
+                                          color: StudyFlowTheme.charcoal,
+                                          fontSize: 22,
+                                          height: 1.05,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        chapters.isEmpty
+                                            ? 'Add your first chapter to begin tracking progress.'
+                                            : '$completedChapters of ${chapters.length} chapters completed',
+                                        style: TextStyle(
+                                          color: StudyFlowTheme.muted,
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                        sliver: SliverToBoxAdapter(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Quick actions',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -0.4,
+                                ),
+                              ),
+                              Text(
+                                'Stay consistent',
+                                style: TextStyle(
+                                  color: StudyFlowTheme.muted,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        sliver: SliverToBoxAdapter(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: GlassCard(
+                                  radius: 22,
+                                  onTap: () => _openFocus(
+                                    focusChapter?.title ?? 'Independent study',
+                                    focusChapter?.subject ?? 'Personal study',
+                                    focusChapter?.estimatedMinutes ?? 25,
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(15),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 42,
+                                          height: 42,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFEDE8FF),
+                                            borderRadius: BorderRadius.circular(14),
+                                          ),
+                                          child: const Icon(
+                                            Icons.timer_rounded,
+                                            color: StudyFlowTheme.sageStrong,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 13),
+                                        const Text(
+                                          'Focus',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          'Start a session',
+                                          style: TextStyle(
+                                            fontSize: 11.5,
+                                            color: StudyFlowTheme.muted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: GlassCard(
+                                  radius: 22,
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const StudyStreakScreen(),
+                                    ),
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(15),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 42,
+                                          height: 42,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFFF1D7),
+                                            borderRadius: BorderRadius.circular(14),
+                                          ),
+                                          child: const Icon(
+                                            Icons.local_fire_department_rounded,
+                                            color: Color(0xFFF0A13A),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 13),
+                                        Text(
+                                          '${StudyFlowData.instance.currentStreak} days',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          'Study streak',
+                                          style: TextStyle(
+                                            fontSize: 11.5,
+                                            color: StudyFlowTheme.muted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (isLoading)
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 22, 20, 12),
+                          sliver: SliverToBoxAdapter(
+                            child: GlassCard(
+                              radius: 22,
+                              child: const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      color: StudyFlowTheme.sageStrong,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (storeError != null)
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 22, 20, 12),
+                          sliver: SliverToBoxAdapter(
+                            child: GlassCard(
+                              radius: 24,
+                              child: Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Icon(
+                                      Icons.error_outline_rounded,
+                                      color: StudyFlowTheme.danger,
+                                      size: 30,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    const Text(
+                                      'Could not load your study plan.',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Check your connection and try again.',
+                                      style: TextStyle(
+                                        color: StudyFlowTheme.muted,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (chapters.isEmpty)
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
+                          sliver: SliverToBoxAdapter(
+                            child: GlassCard(
+                              radius: 24,
+                              child: Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Icon(
+                                      Icons.auto_stories_outlined,
+                                      color: StudyFlowTheme.sageStrong,
+                                      size: 30,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    const Text(
+                                      "Let's create your study plan.",
+                                      style: TextStyle(
+                                        fontSize: 19,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Add a chapter to start tracking your study progress.',
+                                      style: TextStyle(
+                                        color: StudyFlowTheme.muted,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    FilledButton.icon(
+                                      onPressed: () => _openChapterEditor(context),
+                                      icon: const Icon(Icons.add_rounded),
+                                      label: const Text('Create Your First Chapter'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
+                          sliver: SliverToBoxAdapter(
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Today\'s tasks',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.4,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '${todayTasks.length} pending',
+                                  style: const TextStyle(
+                                    color: StudyFlowTheme.sageStrong,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          sliver: SliverToBoxAdapter(
+                            child: GlassCard(
+                              radius: 24,
+                              child: todayTasks.isEmpty
+                                  ? const Padding(
+                                      padding: EdgeInsets.all(16),
+                                      child: Text(
+                                        'No tasks left for today — nice work.',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: StudyFlowTheme.charcoal,
+                                        ),
+                                      ),
+                                    )
+                                  : Column(
+                                      children: [
+                                        for (final task in todayTasks)
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 6,
+                                            ),
+                                            child: InkWell(
+                                              borderRadius: BorderRadius.circular(18),
+                                              onTap: () => _toggleChapterTask(
+                                                context,
+                                                task,
+                                              ),
+                                              child: Container(
+                                                padding: const EdgeInsets.all(12),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFFF5F2FF),
+                                                  borderRadius: BorderRadius.circular(18),
+                                                ),
+                                                child: Row(
+                                                  children: [
+                                                    Container(
+                                                      width: 34,
+                                                      height: 34,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius: BorderRadius.circular(12),
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons.check_circle_outline_rounded,
+                                                        color: StudyFlowTheme.sageStrong,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        children: [
+                                                          Text(
+                                                            task.title,
+                                                            style: const TextStyle(
+                                                              fontWeight: FontWeight.w800,
+                                                              fontSize: 14,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(height: 3),
+                                                          Text(
+                                                            task.estimatedMinutes == null
+                                                                ? 'Flexible session'
+                                                                : '${task.estimatedMinutes} minutes',
+                                                            style: TextStyle(
+                                                              color: StudyFlowTheme.muted,
+                                                              fontSize: 12,
+                                                              fontWeight: FontWeight.w600,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                            ),
+                          ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
+                          sliver: SliverToBoxAdapter(
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Chapter shortcuts',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.4,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Create chapter',
+                                  onPressed: () => _openChapterEditor(context),
+                                  icon: const Icon(
+                                    Icons.add_circle_outline_rounded,
+                                    color: StudyFlowTheme.sageStrong,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          sliver: SliverToBoxAdapter(
+                            child: Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: [
+                                for (final chapter in chapterShortcuts)
+                                  SizedBox(
+                                    width: 154,
+                                    child: GlassCard(
+                                      radius: 22,
+                                      onTap: () => _openFocus(
+                                        chapter.title,
+                                        chapter.subject,
+                                        chapter.estimatedMinutes,
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(14),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Container(
+                                              width: 36,
+                                              height: 36,
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFEDE8FF),
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                              child: const Icon(
+                                                Icons.auto_stories_rounded,
+                                                color: StudyFlowTheme.sageStrong,
+                                                size: 20,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 12),
+                                            Text(
+                                              chapter.title,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              chapter.subject,
+                                              style: TextStyle(
+                                                color: StudyFlowTheme.muted,
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 11.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ],
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: _openProfile,
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [Color(0xFFDDEFE2), Color(0xFFBFDCC6)]),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.75), width: 3),
-                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 18, offset: const Offset(0, 10))],
-                      ),
-                      child: const Icon(Icons.person_rounded, color: StudyFlowTheme.sageStrong, size: 25),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            sliver: SliverToBoxAdapter(
-              child: GestureDetector(
-                onTap: _pickDate,
-                child: GlassContainer(
-                  radius: 20,
-                  padding: const EdgeInsets.all(7),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          height: 46,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEAF5EE),
-                            borderRadius: BorderRadius.circular(15),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 36),
+                        sliver: SliverToBoxAdapter(
+                          child: GlassCard(
+                            radius: 22,
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFEDE8FF),
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: const Icon(
+                                    Icons.lightbulb_rounded,
+                                    color: StudyFlowTheme.sageStrong,
+                                  ),
+                                ),
+                                const SizedBox(width: 13),
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Small steps, big progress.',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14,
+                                          color: StudyFlowTheme.charcoal,
+                                        ),
+                                      ),
+                                      SizedBox(height: 4),
+                                      Text(
+                                        'Focus on one task at a time and keep your momentum going.',
+                                        style: TextStyle(
+                                          color: StudyFlowTheme.muted,
+                                          fontSize: 12,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          alignment: Alignment.center,
-                          child: Text(_dateLabel(), style: const TextStyle(fontWeight: FontWeight.w800, color: StudyFlowTheme.sageStrong)),
                         ),
-                      ),
-                      Expanded(
-                        child: Center(
-                          child: Text('Today', style: TextStyle(color: StudyFlowTheme.muted, fontWeight: FontWeight.w700)),
-                        ),
-                      ),
-                      const Icon(Icons.keyboard_arrow_down_rounded, size: 21, color: StudyFlowTheme.muted),
-                      const SizedBox(width: 8),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-            sliver: SliverToBoxAdapter(
-              child: GlassCard(
-                radius: 30,
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-                child: Row(
-                  children: [
-                    ProgressRing(value: progress, size: 112, strokeWidth: 10, color: const Color(0xFF4F8D60)),
-                    const SizedBox(width: 18),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ProgressPill(text: chapters.isEmpty ? 'START HERE' : 'STUDY PLAN', color: Colors.white),
-                          const SizedBox(height: 12),
-                          Text(
-                            chapters.isEmpty ? "Let's create your study plan." : 'Your study progress',
-                            style: const TextStyle(color: StudyFlowTheme.charcoal, fontSize: 22, height: 1.05, fontWeight: FontWeight.w800),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            chapters.isEmpty
-                                ? 'Add your first chapter to begin tracking progress.'
-                                : '$completedChapters of ${chapters.length} chapters completed',
-                            style: TextStyle(color: StudyFlowTheme.muted, fontSize: 12.5, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 10),
-            sliver: SliverToBoxAdapter(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Quick actions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.4)),
-                  Text('Stay consistent', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 12, fontWeight: FontWeight.w700)),
-                ],
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            sliver: SliverToBoxAdapter(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: GlassCard(
-                      radius: 22,
-                      onTap: () => _openFocus(
-                        focusChapter?.title ?? 'Independent study',
-                        focusChapter?.subject ?? 'Personal study',
-                        focusChapter?.estimatedMinutes ?? 25,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(15),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFFEAF5EE), borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.timer_rounded, color: StudyFlowTheme.sageStrong)),
-                            const SizedBox(height: 13),
-                            const Text('Focus', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                            const SizedBox(height: 3),
-                            Text('Start a session', style: TextStyle(fontSize: 11.5, color: StudyFlowTheme.muted, fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: GlassCard(
-                      radius: 22,
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StudyStreakScreen())),
-                      child: Padding(
-                        padding: const EdgeInsets.all(15),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(width: 42, height: 42, decoration: BoxDecoration(color: const Color(0xFFFFF1D7), borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.local_fire_department_rounded, color: Color(0xFFF0A13A))),
-                            const SizedBox(height: 13),
-                            Text('${StudyFlowData.instance.currentStreak} days', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                            const SizedBox(height: 3),
-                            Text('Study streak', style: TextStyle(fontSize: 11.5, color: StudyFlowTheme.muted, fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (chapters.isEmpty)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
-              sliver: SliverToBoxAdapter(
-                child: GlassCard(
-                  radius: 24,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(Icons.auto_stories_outlined, color: StudyFlowTheme.sageStrong, size: 30),
-                      const SizedBox(height: 12),
-                      const Text("Let's create your study plan.", style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 6),
-                      Text('Add a chapter to start tracking your study progress.', style: TextStyle(color: StudyFlowTheme.muted, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: () => _openChapterEditor(context),
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text('Create Your First Chapter'),
                       ),
                     ],
                   ),
                 ),
               ),
-            )
-          else ...[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
-              sliver: SliverToBoxAdapter(
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text('Your study plan', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.4)),
-                    ),
-                    Text('$completedChapters/${chapters.length} complete', style: const TextStyle(color: StudyFlowTheme.sageStrong, fontWeight: FontWeight.w800, fontSize: 13)),
-                    IconButton(
-                      tooltip: 'Create chapter',
-                      onPressed: () => _openChapterEditor(context),
-                      icon: const Icon(Icons.add_circle_outline_rounded, color: StudyFlowTheme.sageStrong),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverList.builder(
-                itemCount: chapters.length,
-                itemBuilder: (context, index) {
-                  final chapter = chapters[index];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: StudyChapterCard(
-                      chapter: chapter,
-                      onToggleCompleted: () => _toggleChapterCompletion(context, chapter),
-                      onToggleTask: (task) => _toggleChapterTask(context, task),
-                      onFocus: () => _openFocus(
-                        chapter.title,
-                        chapter.subject,
-                        chapter.estimatedMinutes,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 34),
-            sliver: SliverToBoxAdapter(
-              child: GlassCard(
-                radius: 22,
-                child: Row(
-                  children: [
-                    Container(width: 44, height: 44, decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.lightbulb_rounded, color: StudyFlowTheme.sageStrong)),
-                    const SizedBox(width: 13),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Small steps, big progress.', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: StudyFlowTheme.charcoal)),
-                          SizedBox(height: 4),
-                          Text('Focus on one task at a time and keep your momentum going.', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 12, height: 1.35)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+            );
+          },
         );
       },
     );

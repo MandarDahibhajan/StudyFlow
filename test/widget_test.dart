@@ -12,6 +12,8 @@ import 'package:studyflow_flutter/main.dart';
 import 'package:studyflow_flutter/study_note.dart';
 import 'package:studyflow_flutter/study_plan.dart';
 
+void _noop(int _) {}
+
 void main() {
   test('completing and undoing a task reverses study totals', () async {
     final data = StudyFlowData.instance;
@@ -159,6 +161,27 @@ void main() {
 
     expect(find.text("Let's create your study plan."), findsOneWidget);
     expect(find.text('Create Your First Chapter'), findsOneWidget);
+  });
+
+  testWidgets('main navigation exposes home, chapters, tasks, and profile destinations', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: const StudyFlowNavBar(
+          selectedIndex: 0,
+          onDestinationSelected: _noop,
+        ),
+      ),
+    );
+
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Chapters'), findsOneWidget);
+    expect(find.text('Tasks'), findsOneWidget);
+    expect(find.text('Profile'), findsOneWidget);
+    expect(find.text('Plan'), findsNothing);
+    expect(find.text('Notes'), findsNothing);
+    expect(find.text('More'), findsNothing);
   });
 
   testWidgets('planner lays out and opens the chapter editor', (
