@@ -47,12 +47,15 @@ void main() {
     expect(find.text('Today'), findsOneWidget);
   });
 
-  test('email and OTP validation helpers reject invalid values', () {
+  test('email, password, and username validation helpers reject invalid values', () {
     expect(validateEmail('user@example.com'), isNull);
     expect(validateEmail('bad-email'), isNotNull);
-    expect(validateOtp('123456'), isNull);
-    expect(validateOtp('12345'), isNotNull);
-    expect(validateOtp('abcdef'), isNotNull);
+    expect(validatePassword('StrongPass1!'), isNull);
+    expect(validatePassword('short'), isNotNull);
+    expect(validatePassword('password'), isNotNull);
+    expect(validateUsername('studyflow_user'), isNull);
+    expect(validateUsername('  '), isNotNull);
+    expect(validateUsername('ab'), isNotNull);
   });
 
   test('chapter and topic models restore database completion fields', () {

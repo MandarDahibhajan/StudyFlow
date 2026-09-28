@@ -39,16 +39,31 @@ String? validateEmail(String? value) {
   return null;
 }
 
-String? validateOtp(String? value) {
-  final otp = value?.trim() ?? '';
-  if (otp.isEmpty) {
-    return 'Please enter the 6-digit verification code.';
+String? validateUsername(String? value) {
+  final username = value?.trim() ?? '';
+  if (username.isEmpty) {
+    return 'Please enter a username.';
   }
-
-  if (otp.length != 6 || !RegExp(r'^\d{6}$').hasMatch(otp)) {
-    return 'Enter a valid 6-digit code.';
+  if (username.length < 3) {
+    return 'Username must be at least 3 characters.';
   }
+  if (!RegExp(r"^[a-zA-Z0-9_ .'-]+$").hasMatch(username)) {
+    return 'Use letters, numbers, spaces, underscores, or simple punctuation.';
+  }
+  return null;
+}
 
+String? validatePassword(String? value) {
+  final password = value ?? '';
+  if (password.isEmpty) {
+    return 'Please enter your password.';
+  }
+  if (password.length < 8) {
+    return 'Use at least 8 characters.';
+  }
+  if (!RegExp(r'^(?=.*[A-Za-z])(?=.*\d)').hasMatch(password)) {
+    return 'Use letters and numbers in your password.';
+  }
   return null;
 }
 
@@ -758,30 +773,38 @@ class StudyFlowData extends ChangeNotifier {
     try {
       final profile = await client
           .from('profiles')
-          .select('display_name, avatar_url')
+          .select('username, display_name, avatar_url')
           .eq('id', user.id)
           .maybeSingle();
 
       if (!_isCurrentLoad(user.id, generation)) return;
 
+      final metadata = user.userMetadata ?? <String, dynamic>{};
+      final metadataName = (metadata['display_name'] ?? metadata['name'])
+          ?.toString()
+          .trim();
+      final fallbackName = metadataName?.isNotEmpty == true
+          ? metadataName!
+          : 'StudyFlow User';
+
       if (profile == null) {
-        final metadata = user.userMetadata ?? <String, dynamic>{};
-        final metadataName = (metadata['display_name'] ?? metadata['name'])
-            ?.toString()
-            .trim();
-        profileDisplayName = metadataName?.isNotEmpty == true
-            ? metadataName!
-            : 'StudyFlow User';
-        await client.from('profiles').insert({
+        profileDisplayName = fallbackName;
+        await client.from('profiles').upsert({
           'id': user.id,
+          'username': profileDisplayName,
           'display_name': profileDisplayName,
-        });
+        }, onConflict: 'id');
         if (!_isCurrentLoad(user.id, generation)) return;
       } else {
+        final storedUsername = (profile['username'] as String?)?.trim();
+        final storedDisplayName = (profile['display_name'] as String?)?.trim();
         profileDisplayName =
-            (profile['display_name'] as String?)?.trim().isNotEmpty == true
-                ? (profile['display_name'] as String).trim()
-                : 'StudyFlow User';
+            (storedUsername?.isNotEmpty == true ? storedUsername : storedDisplayName)
+                ?.isNotEmpty == true
+            ? (storedUsername?.isNotEmpty == true
+                    ? storedUsername!
+                    : storedDisplayName!)
+                : fallbackName;
         profileAvatarPath = profile['avatar_url'] as String?;
         final avatarPath = profileAvatarPath;
         if (avatarPath != null) {
@@ -904,6 +927,32 @@ class StudyFlowData extends ChangeNotifier {
   void setProfileAvatar({required String? path, required String? url}) {
     profileAvatarPath = path;
     profileAvatarUrl = url;
+    notifyListeners();
+  }
+
+  Future<void> updateProfileName(String username) async {
+    final trimmed = username.trim();
+    final cleaned = validateUsername(trimmed);
+    if (cleaned != null) {
+      throw ArgumentError(cleaned);
+    }
+
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) {
+      throw StateError('No active user is available to update the profile.');
+    }
+
+    final payload = {
+      'id': userId,
+      'username': trimmed,
+      'display_name': trimmed,
+    };
+
+    await Supabase.instance.client
+        .from('profiles')
+        .upsert(payload, onConflict: 'id');
+
+    profileDisplayName = trimmed;
     notifyListeners();
   }
 
@@ -1056,8 +1105,17 @@ class _AuthGateState extends State<AuthGate> {
     unawaited(_syncRevenueCatUser(auth.currentUser));
     _authSubscription = auth.onAuthStateChange.listen((state) {
       final user = state.session?.user;
+      final previousUserId = StudyFlowData.instance._loadedUserId;
+      if (user == null) {
+        StudyFlowData.instance.clearForSignedOut();
+        return;
+      }
+
+      if (previousUserId != null && previousUserId != user.id) {
+        StudyFlowData.instance.clearForSignedOut();
+      }
+
       unawaited(_syncRevenueCatUser(user));
-      if (user == null) StudyFlowData.instance.clearForSignedOut();
     });
   }
 
@@ -1129,42 +1187,57 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   bool _loading = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
     _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
-  Future<void> _sendOtp() async {
+  Future<void> _signIn() async {
     final email = _emailController.text.trim();
-    final validationError = validateEmail(email);
-    if (validationError != null) {
-      _showMessage(validationError);
+    final password = _passwordController.text;
+
+    final emailError = validateEmail(email);
+    if (emailError != null) {
+      _showMessage(emailError);
+      return;
+    }
+
+    final passwordError = validatePassword(password);
+    if (passwordError != null) {
+      _showMessage(passwordError);
       return;
     }
 
     setState(() => _loading = true);
 
     try {
-      await Supabase.instance.client.auth.signInWithOtp(
+      final response = await Supabase.instance.client.auth.signInWithPassword(
         email: email,
-        shouldCreateUser: true,
+        password: password,
       );
 
+      if (response.session == null) {
+        throw StateError('Supabase did not return a session.');
+      }
+
       if (!mounted) return;
-      _showMessage('A 6-digit code was sent to $email.');
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => OtpVerificationScreen(email: email),
-        ),
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } on AuthException catch (e) {
       _showMessage(_supabaseAuthMessage(e));
-    } catch (_) {
-      _showMessage('Could not send the verification code. Please try again.');
+    } catch (e, stackTrace) {
+      developer.log(
+        'Unexpected error during sign-in.',
+        name: 'StudyFlowAuth',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _showMessage('Could not sign in. Please check your connection and try again.');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1174,13 +1247,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String _supabaseAuthMessage(AuthException e) {
     final message = e.message.toLowerCase();
-    if (message.contains('invalid')) {
-      return 'Please enter a valid email address.';
+    if (message.contains('invalid login credentials') ||
+        message.contains('invalid credentials') ||
+        message.contains('invalid grant') ||
+        message.contains('email or password')) {
+      return 'Incorrect email or password. Please try again.';
     }
     if (message.contains('rate limit') || message.contains('too many')) {
       return 'Too many attempts. Please wait a moment and try again.';
     }
-    return e.message.isNotEmpty ? e.message : 'Could not start OTP login.';
+    if (message.contains('network') || message.contains('timeout')) {
+      return 'Network issue. Please check your connection and retry.';
+    }
+    return e.message.isNotEmpty ? e.message : 'Could not sign in.';
   }
 
   void _showMessage(String message) {
@@ -1231,31 +1310,78 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 28),
                       const Text('Welcome back', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: -0.8)),
                       const SizedBox(height: 8),
-                      Text('Enter your email to receive a 6-digit verification code.', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 15, fontWeight: FontWeight.w500)),
+                      Text('Sign in with your email and password.', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 15, fontWeight: FontWeight.w500)),
                       const SizedBox(height: 28),
                       GlassTextField(
                         controller: _emailController,
                         labelText: 'Email',
                         hintText: 'you@example.com',
                         keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) => _sendOtp(),
+                        textInputAction: TextInputAction.next,
                         prefixIcon: const Icon(Icons.email_outlined, color: StudyFlowTheme.sageStrong),
+                      ),
+                      const SizedBox(height: 18),
+                      GlassTextField(
+                        controller: _passwordController,
+                        labelText: 'Password',
+                        hintText: 'Enter your password',
+                        obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _signIn(),
+                        prefixIcon: const Icon(Icons.lock_outline, color: StudyFlowTheme.sageStrong),
+                        suffixIcon: IconButton(
+                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                          color: StudyFlowTheme.muted,
+                        ),
                       ),
                       const SizedBox(height: 20),
                       SizedBox(
                         width: double.infinity,
                         height: 56,
                         child: FilledButton(
-                          onPressed: _loading ? null : _sendOtp,
+                          onPressed: _loading ? null : _signIn,
                           style: FilledButton.styleFrom(
                             backgroundColor: StudyFlowTheme.sage,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                           ),
                           child: _loading
                               ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Text('Send code', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                              : const Text('Sign In', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                         ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const CreateAccountScreen(),
+                                  ),
+                                );
+                              },
+                              child: const Text('Create Account'),
+                            ),
+                          ),
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ForgotPasswordScreen(
+                                      initialEmail: _emailController.text.trim(),
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: const Text('Forgot Password'),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1269,116 +1395,110 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class OtpVerificationScreen extends StatefulWidget {
-  const OtpVerificationScreen({super.key, required this.email});
-
-  final String email;
+class CreateAccountScreen extends StatefulWidget {
+  const CreateAccountScreen({super.key});
 
   @override
-  State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
+  State<CreateAccountScreen> createState() => _CreateAccountScreenState();
 }
 
-class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
-  final TextEditingController _otpController = TextEditingController();
+class _CreateAccountScreenState extends State<CreateAccountScreen> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
   bool _loading = false;
-  bool _resending = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   @override
   void dispose() {
-    _otpController.dispose();
+    _emailController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  Future<void> _verifyOtp() async {
-    final otp = _otpController.text.trim();
-    final validationError = validateOtp(otp);
-    if (validationError != null) {
-      _showMessage(validationError);
+  Future<void> _createAccount() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    final confirmPassword = _confirmPasswordController.text;
+
+    final emailError = validateEmail(email);
+    if (emailError != null) {
+      _showMessage(emailError);
+      return;
+    }
+
+    final passwordError = validatePassword(password);
+    if (passwordError != null) {
+      _showMessage(passwordError);
+      return;
+    }
+
+    if (password != confirmPassword) {
+      _showMessage('Passwords do not match.');
       return;
     }
 
     setState(() => _loading = true);
 
     try {
-      final response = await Supabase.instance.client.auth.verifyOTP(
-        email: widget.email,
-        token: otp,
-        type: OtpType.email,
-      );
-
-      if (response.session == null) {
-        throw StateError('Supabase did not return a session.');
+      final username = _usernameController.text.trim();
+      final usernameError = validateUsername(username);
+      if (usernameError != null) {
+        _showMessage(usernameError);
+        return;
       }
 
-      developer.log(
-        'Supabase OTP verified successfully.',
-        name: 'StudyFlowAuth',
+      final response = await Supabase.instance.client.auth.signUp(
+        email: email,
+        password: password,
       );
 
+      final session = response.session;
+      if (session != null && session.user != null) {
+        await Supabase.instance.client.from('profiles').upsert({
+          'id': session.user!.id,
+          'username': username,
+          'display_name': username,
+        }, onConflict: 'id');
+        if (!mounted) return;
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        return;
+      }
+
       if (!mounted) return;
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      _showMessage('Account created successfully. You can now sign in with your email and password.');
+      Navigator.of(context).pop();
     } on AuthException catch (e) {
-      developer.log(
-        'Supabase OTP verification failed',
-        name: 'StudyFlowAuth',
-        error: e.message,
-      );
-      _showMessage(_supabaseOtpMessage(e));
+      final message = e.message.toLowerCase();
+      if (message.contains('user already registered') ||
+          message.contains('already exists') ||
+          message.contains('duplicate') ||
+          message.contains('user with this email already exists')) {
+        _showMessage('An account with this email already exists. Please sign in instead.');
+      } else if (message.contains('password')) {
+        _showMessage('Please choose a stronger password.');
+      } else if (message.contains('network')) {
+        _showMessage('Network issue. Please check your connection and retry.');
+      } else {
+        _showMessage(e.message.isNotEmpty ? e.message : 'Could not create your account.');
+      }
     } catch (e, stackTrace) {
       developer.log(
-        'Unexpected error during OTP verification flow.',
+        'Unexpected error during account creation.',
         name: 'StudyFlowAuth',
         error: e,
         stackTrace: stackTrace,
       );
-      _showMessage('The code could not be verified. Please try again.');
+      _showMessage('Could not create your account. Please try again.');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
       }
     }
-  }
-
-  Future<void> _resendCode() async {
-    setState(() => _resending = true);
-
-    try {
-      await Supabase.instance.client.auth.signInWithOtp(
-        email: widget.email,
-        shouldCreateUser: true,
-      );
-      _showMessage('A new 6-digit code was sent to ${widget.email}.');
-    } on AuthException catch (e) {
-      _showMessage(_supabaseAuthMessage(e));
-    } catch (_) {
-      _showMessage('Could not resend the code. Please try again.');
-    } finally {
-      if (mounted) {
-        setState(() => _resending = false);
-      }
-    }
-  }
-
-  String _supabaseAuthMessage(AuthException e) {
-    final message = e.message.toLowerCase();
-    if (message.contains('invalid')) {
-      return 'Please enter a valid email address.';
-    }
-    if (message.contains('rate limit') || message.contains('too many')) {
-      return 'Too many attempts. Please wait a moment and try again.';
-    }
-    return e.message.isNotEmpty ? e.message : 'Could not start OTP login.';
-  }
-
-  String _supabaseOtpMessage(AuthException e) {
-    final message = e.message.toLowerCase();
-    if (message.contains('invalid') || message.contains('too short')) {
-      return 'The verification code is invalid. Please try again.';
-    }
-    if (message.contains('expired') || message.contains('expired')) {
-      return 'This code has expired. Please request a new one.';
-    }
-    return e.message.isNotEmpty ? e.message : 'The code could not be verified.';
   }
 
   void _showMessage(String message) {
@@ -1394,7 +1514,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     return StudyFlowBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: const GlassAppBar(title: 'Verify code', showBack: true),
+        appBar: const GlassAppBar(title: 'Create account', showBack: true),
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -1407,42 +1527,197 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Check your email', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: -0.7)),
+                      const Text('Create your account', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: -0.7)),
                       const SizedBox(height: 8),
-                      Text('Enter the 6-digit code sent to ${widget.email}', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 14.5, fontWeight: FontWeight.w500)),
+                      Text('Use your email and a secure password to get started.', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 14.5, fontWeight: FontWeight.w500)),
                       const SizedBox(height: 28),
                       GlassTextField(
-                        controller: _otpController,
-                        labelText: 'Verification code',
-                        hintText: '123456',
-                        keyboardType: TextInputType.number,
+                        controller: _emailController,
+                        labelText: 'Email',
+                        hintText: 'you@example.com',
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        prefixIcon: const Icon(Icons.email_outlined, color: StudyFlowTheme.sageStrong),
+                      ),
+                      const SizedBox(height: 18),
+                      GlassTextField(
+                        controller: _usernameController,
+                        labelText: 'Username',
+                        hintText: 'studyflow_user',
+                        textInputAction: TextInputAction.next,
+                        prefixIcon: const Icon(Icons.person_outline, color: StudyFlowTheme.sageStrong),
+                      ),
+                      const SizedBox(height: 18),
+                      GlassTextField(
+                        controller: _passwordController,
+                        labelText: 'Password',
+                        hintText: 'Create a password',
+                        obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.next,
+                        prefixIcon: const Icon(Icons.lock_outline, color: StudyFlowTheme.sageStrong),
+                        suffixIcon: IconButton(
+                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                          color: StudyFlowTheme.muted,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      GlassTextField(
+                        controller: _confirmPasswordController,
+                        labelText: 'Confirm password',
+                        hintText: 'Re-enter your password',
+                        obscureText: _obscureConfirmPassword,
                         textInputAction: TextInputAction.done,
-                        maxLength: 6,
-                        onSubmitted: (_) => _verifyOtp(),
-                        prefixIcon: const Icon(Icons.verified_user_outlined, color: StudyFlowTheme.sageStrong),
+                        onSubmitted: (_) => _createAccount(),
+                        prefixIcon: const Icon(Icons.lock_reset_rounded, color: StudyFlowTheme.sageStrong),
+                        suffixIcon: IconButton(
+                          onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                          icon: Icon(_obscureConfirmPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                          color: StudyFlowTheme.muted,
+                        ),
                       ),
                       const SizedBox(height: 24),
                       SizedBox(
                         width: double.infinity,
                         height: 56,
                         child: FilledButton(
-                          onPressed: _loading ? null : _verifyOtp,
+                          onPressed: _loading ? null : _createAccount,
                           style: FilledButton.styleFrom(
                             backgroundColor: StudyFlowTheme.sage,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                           ),
                           child: _loading
                               ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Text('Verify code', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                              : const Text('Create account', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                         ),
                       ),
-                      const SizedBox(height: 18),
-                      Center(
-                        child: TextButton(
-                          onPressed: _loading || _resending ? null : _resendCode,
-                          child: _resending
-                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Text('Resend code', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ForgotPasswordScreen extends StatefulWidget {
+  const ForgotPasswordScreen({super.key, this.initialEmail});
+
+  final String? initialEmail;
+
+  @override
+  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+}
+
+class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+  late final TextEditingController _emailController =
+      TextEditingController(text: widget.initialEmail ?? '');
+  bool _loading = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendResetLink() async {
+    final email = _emailController.text.trim();
+    final validationError = validateEmail(email);
+    if (validationError != null) {
+      _showMessage(validationError);
+      return;
+    }
+
+    setState(() => _loading = true);
+
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      if (!mounted) return;
+      _showMessage('If an account exists for $email, a password reset email has been sent.');
+      Navigator.of(context).pop();
+    } on AuthException catch (e) {
+      _showMessage(_supabaseResetMessage(e));
+    } catch (e, stackTrace) {
+      developer.log(
+        'Unexpected error during password reset request.',
+        name: 'StudyFlowAuth',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _showMessage('Could not send the password reset email. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  String _supabaseResetMessage(AuthException e) {
+    final message = e.message.toLowerCase();
+    if (message.contains('network')) {
+      return 'Network issue. Please check your connection and retry.';
+    }
+    if (message.contains('invalid')) {
+      return 'Please enter a valid email address.';
+    }
+    return e.message.isNotEmpty ? e.message : 'Could not send the reset email.';
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StudyFlowBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: const GlassAppBar(title: 'Reset password', showBack: true),
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 430),
+                child: GlassContainer(
+                  radius: 32,
+                  padding: const EdgeInsets.fromLTRB(22, 18, 22, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Reset your password', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, letterSpacing: -0.7)),
+                      const SizedBox(height: 8),
+                      Text('We will send a password reset email to your account if it exists.', style: TextStyle(color: StudyFlowTheme.muted, fontSize: 14.5, fontWeight: FontWeight.w500)),
+                      const SizedBox(height: 28),
+                      GlassTextField(
+                        controller: _emailController,
+                        labelText: 'Email',
+                        hintText: 'you@example.com',
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _sendResetLink(),
+                        prefixIcon: const Icon(Icons.email_outlined, color: StudyFlowTheme.sageStrong),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: FilledButton(
+                          onPressed: _loading ? null : _sendResetLink,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: StudyFlowTheme.sage,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                          ),
+                          child: _loading
+                              ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                              : const Text('Send reset email', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                         ),
                       ),
                     ],
@@ -2537,8 +2812,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   leading: Container(width: 46, height: 46, decoration: BoxDecoration(color: const Color(0xFFEAF5EE), borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.person_outline, color: StudyFlowTheme.sageStrong)),
-                  title: const Text('Name', style: TextStyle(fontWeight: FontWeight.w800)),
+                  title: const Text('Username', style: TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: Padding(padding: const EdgeInsets.only(top: 4), child: Text(name, style: TextStyle(color: StudyFlowTheme.muted, fontWeight: FontWeight.w600))),
+                  trailing: const Icon(Icons.edit_outlined, color: StudyFlowTheme.muted),
+                  onTap: () async {
+                    final controller = TextEditingController(text: name);
+                    final result = await showDialog<String>(
+                      context: context,
+                      builder: (dialogContext) => AlertDialog(
+                        title: const Text('Edit username'),
+                        content: TextField(
+                          controller: controller,
+                          autofocus: true,
+                          decoration: const InputDecoration(labelText: 'Username'),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+                            child: const Text('Save'),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (result == null || !context.mounted) return;
+
+                    final value = result.trim();
+                    final error = validateUsername(value);
+                    if (error != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(error)),
+                      );
+                      return;
+                    }
+
+                    try {
+                      await StudyFlowData.instance.updateProfileName(value);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Username updated.')),
+                        );
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(error is ArgumentError ? error.message.toString() : 'Could not update your username. Please try again.')),
+                        );
+                      }
+                    }
+                  },
                 ),
               ),
 
@@ -2560,32 +2886,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 radius: 20,
                 child: ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  leading: Container(width: 46, height: 46, decoration: BoxDecoration(color: const Color(0xFFEAF5EE), borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.mark_email_read_outlined, color: StudyFlowTheme.sageStrong)),
-                  title: const Text('Email sign-in code', style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Padding(padding: EdgeInsets.only(top: 4), child: Text('This account uses passwordless sign-in', style: TextStyle(fontWeight: FontWeight.w600))),
+                  leading: Container(width: 46, height: 46, decoration: BoxDecoration(color: const Color(0xFFEAF5EE), borderRadius: BorderRadius.circular(14)), child: const Icon(Icons.lock_reset_rounded, color: StudyFlowTheme.sageStrong)),
+                  title: const Text('Reset password', style: TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: const Padding(padding: EdgeInsets.only(top: 4), child: Text('Send a recovery email for this account', style: TextStyle(fontWeight: FontWeight.w600))),
                   trailing: const Icon(Icons.chevron_right, color: StudyFlowTheme.muted),
-                  onTap: () async {
-                    if (user?.email == null) return;
-
-                    try {
-                      await Supabase.instance.client.auth.signInWithOtp(
-                        email: user!.email!,
-                        shouldCreateUser: false,
-                      );
-                      if (context.mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => OtpVerificationScreen(email: user.email!),
+                  onTap: () {
+                    if (context.mounted) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ForgotPasswordScreen(
+                            initialEmail: user?.email ?? '',
                           ),
-                        );
-                      }
-                    } on AuthException catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(e.message)),
-                        );
-                      }
+                        ),
+                      );
                     }
                   },
                 ),
